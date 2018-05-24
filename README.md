@@ -1,5 +1,5 @@
 # Equinox Clock
-Equinox clock with Arduino and WS2812B LED stripe (144 LEDs), supports inverse mode too.
+Equinox clock with Arduino, DS3231 Real Time Clock and WS2812B LED stripe (144 LEDs).
 
 
 ## Features
