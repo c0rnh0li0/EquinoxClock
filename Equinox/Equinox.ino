@@ -27,6 +27,10 @@ uint8_t the_hour;
 int prev_sec_pos;
 int sec_calls = 0;
 bool is_inverse = false;
+bool going_inverse = false;
+int to_inverse = 0;
+int inverse_fade = 0;
+int led_brightness = 240;
 
 const uint8_t map_pixel_time[144] = { 
   0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 
@@ -49,13 +53,7 @@ const uint8_t map_pixel_time[144] = {
 void setup() {
   FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
 
-  the_second = second(local);
-  the_minute = minute(local);
-  the_hour = hour(local); 
-  
   minsec_factor = (float) NUM_LEDS / 60.00;
-
-  //is_inverse = true;
   
   setSyncProvider(RTC.get);   // the function to get the time from the RTC
   setSyncInterval(1);
@@ -64,6 +62,8 @@ void setup() {
   Serial.begin(9600);
 }
 
+#include "Equinox.h"
+
 void loop() {
   FastLED.clear();
   local = CE.toLocal(now(), &tcr);
@@ -71,13 +71,14 @@ void loop() {
   the_second = second(local);
   the_minute = minute(local);
   the_hour = hour(local); 
-  
+
+  check_dates(local);
+
   int pos_hour = (the_hour % 12) * 5 + floor(the_minute / 12);
-  
-  float gradient = the_minute * 99 / 59 + (the_hour % 3) * 100;
-  uint8_t second_hue = map(gradient, 0, 299, 0, 255);
-  uint8_t minute_hue = second_hue + 35;
-  uint8_t hour_hue = minute_hue + 35;
+
+  uint8_t second_hue = get_second_hue();
+  uint8_t minute_hue = get_minute_hue();
+  uint8_t hour_hue = get_hour_hue();
   
   if (the_second != last_second) {
     mill = 0;
@@ -86,10 +87,35 @@ void loop() {
   } else {
     mill = map((millis() - last_time) % 1000, 0, 1000, 0, 255);
   }  
+  
+  /*if (Serial.available() > 0) {
+    String tmp = Serial.readString();
+    if (tmp.toInt() != to_inverse) {
+      to_inverse = tmp.toInt();
+      going_inverse = true;
+    }
+  }*/
 
+  int should_inverse = check_should_inverse(local);
+  if (should_inverse != -1) {
+    if (should_inverse == 1 && !is_inverse && !going_inverse) {
+        to_inverse = should_inverse;
+        going_inverse = true;
+    }
+    else if (should_inverse == 0 && is_inverse && !going_inverse) {
+        to_inverse = should_inverse;
+        going_inverse = true;
+    }  
+  }
+  
+  
+  if (going_inverse) {
+    goInverse(hour_hue);
+  }
+  
   if (is_inverse) {
     for (int i = 0; i < NUM_LEDS; i++)
-      leds[ map_pixel_time[i]] = CHSV( hour_hue, 255, 255 );
+      leds[ map_pixel_time[i]] = CHSV( hour_hue, 255, led_brightness );
 
     minute_hue = hour_hue;
     second_hue = hour_hue;
@@ -116,105 +142,6 @@ void loop() {
   
   int led_brightness = 255;
   FastLED.setBrightness(led_brightness);
-  FastLED.show();  
+  FastLED.show(); 
   FastLED.delay(50);
 }
-
-void draw_second(int pos, uint8_t hue) {
-  if (prev_sec_pos != pos) {
-    sec_calls = 0;
-    prev_sec_pos = pos;
-  }
-  else {
-    sec_calls++;
-  }
-
-  uint8_t calls_to_mill = map(sec_calls, 0, 7, 0, 255);
-  
-  uint8_t sprev = map(255 - calls_to_mill, 0, 255, 0, 255);
-  uint8_t snext = map(calls_to_mill, 0, 255, 0, 255);
-
-  int prevpos_2 = pos - 2 < 0 ? NUM_LEDS + pos - 2 : pos - 2;
-  int prevpos_1 = pos - 1 < 0 ? NUM_LEDS + pos - 1 : pos - 1;
-
-  int nextpos_1 = pos + 1 > NUM_LEDS ? (pos) - NUM_LEDS : pos + 1;
-  int nextpos_2 = pos + 2 > NUM_LEDS ? (pos + 1) - NUM_LEDS : pos + 2;
-  
-  leds[ map_pixel_time[prevpos_1]] = CHSV( hue, 255, is_inverse ? snext : sprev); // mid    
-  leds[ map_pixel_time[pos]] = is_inverse ? CHSV(0, 0, 0) : CHSV( hue, 255, 255); // mid  
-  leds[ map_pixel_time[nextpos_1]] = is_inverse ? CHSV(0, 0, 0) : CHSV( hue, 255, 255); // mid
-  leds[ map_pixel_time[nextpos_2]] = CHSV( hue, 255, is_inverse ? sprev : snext ); // mid
-
-  if (is_inverse) {
-    leds[ map_pixel_time[prevpos_1]] = CHSV(0, 0, 0); // mid
-    leds[ map_pixel_time[prevpos_2]] = CHSV( hue, 255, snext); // mid
-
-    int nextpos_3 = pos + 3 > NUM_LEDS ? (pos + 2) - NUM_LEDS : pos + 3;
-    leds[ map_pixel_time[nextpos_2]] = CHSV( 0, 0, 0); // mid
-    leds[ map_pixel_time[nextpos_3]] = CHSV( hue, 255, sprev); // mid
-  }
-}
-
-void draw_minute(int pos, uint8_t hue) {
-  draw_minute_hour(pos, the_second, hue, false);
-}
-
-void draw_hour(float float_pos, uint8_t hue) {
-  int pos = floor(float_pos);
-
-  draw_minute_hour(pos, the_minute, hue, true);
-}
-
-void draw_minute_hour(int pos, int factor, uint8_t hue, bool is_hour) {
-  int prevpos_2 = pos - 2 < 0 ? NUM_LEDS + pos - 2 : pos - 2;
-  int prevpos_1 = pos - 1 < 0 ? NUM_LEDS + pos - 1 : pos - 1;
-
-  int nextpos_1 = pos + 1 > NUM_LEDS ? (pos) - NUM_LEDS : pos + 1;
-  int nextpos_2 = pos + 2 > NUM_LEDS ? (pos + 1) - NUM_LEDS : pos + 2;
-  
-  leds[ map_pixel_time[prevpos_2]] = CHSV(hue, 255, is_inverse ? map(factor, 0, 59, 0, 255) : 255 - map(factor, 0, 59, 0, 255));
-  leds[ map_pixel_time[prevpos_1]] = is_inverse ? CHSV(0, 0, 0) : CHSV( hue, 255, 255 );
-  leds[ map_pixel_time[pos]] = is_inverse ? CHSV(0, 0, 0) : CHSV( hue, 255, 255 );
-  leds[ map_pixel_time[nextpos_1]] = is_inverse ? CHSV(0, 0, 0) : CHSV( hue, 255, 255 );
-  leds[ map_pixel_time[nextpos_2]] = CHSV(hue, 255, is_inverse ? 255 - map(factor, 0, 59, 0, 255) : map(factor, 0, 59, 0, 255));
-
-  if (is_hour) {
-    int prevpos_3 = pos - 3 < 0 ? NUM_LEDS + pos - 3 : pos - 3;
-    int nextpos_3 = pos + 3 > NUM_LEDS ? (pos + 2) - NUM_LEDS : pos + 3;
-    
-    leds[ map_pixel_time[prevpos_2]] = is_inverse ? CHSV(0, 0, 0) : CHSV( hue, 255, 255);
-    leds[ map_pixel_time[prevpos_3]] = CHSV(hue, 255, 255 - map(factor, 0, 59, 0, 255));
-
-    leds[ map_pixel_time[nextpos_2]] = is_inverse ? CHSV(0, 0, 0) : CHSV( hue, 255, 255);
-    leds[ map_pixel_time[nextpos_3]] = CHSV(hue, 255, map(factor, 0, 59, 0, 255));
-
-    if (is_inverse) {
-      int prevpos_4 = pos - 4 < 0 ? NUM_LEDS + pos - 4 : pos - 4;
-      int nextpos_4 = pos + 4 > NUM_LEDS ? (pos + 3) - NUM_LEDS : pos + 4;
-
-      leds[ map_pixel_time[prevpos_3]] = CHSV(0, 0, 0);
-      leds[ map_pixel_time[prevpos_4]] = CHSV(hue, 255, map(factor, 0, 59, 0, 255));
-
-      leds[ map_pixel_time[nextpos_3]] = CHSV(0, 0, 0);
-      leds[ map_pixel_time[nextpos_4]] = CHSV(hue, 255, 255 - map(factor, 0, 59, 0, 255));
-    }
-  }
-  else {
-    if (is_inverse) {
-      int prevpos_3 = pos - 3 < 0 ? NUM_LEDS + pos - 3 : pos - 3;
-      int nextpos_3 = pos + 3 > NUM_LEDS ? (pos + 2) - NUM_LEDS : pos + 3;
-      
-      leds[ map_pixel_time[prevpos_2]] = CHSV(0, 0, 0);
-      leds[ map_pixel_time[prevpos_3]] = CHSV(hue, 255, map(factor, 0, 59, 0, 255));
-  
-      leds[ map_pixel_time[nextpos_2]] = CHSV(0, 0, 0);
-      leds[ map_pixel_time[nextpos_3]] = CHSV(hue, 255, 255 - map(factor, 0, 59, 0, 255));
-    }
-  }
-}
-
-float mapf(float x, float in_min, float in_max, float out_min, float out_max)
-{
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
